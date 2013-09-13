@@ -22,6 +22,16 @@ BEGIN {
     *Bugzilla::User::_orig_in_group = \&Bugzilla::User::in_group;
     *Bugzilla::User::in_group = \&_user_in_group;
     *Bugzilla::User::check_can_admin_product = \&_user_check_can_admin_product;
+    *Bugzilla::User::in_ldap_group = \&_user_in_ldap_group;
+}
+
+sub _user_in_ldap_group {
+    my ($self) = @_;
+
+    foreach my $group (@{ $self->groups || [] }) {
+        return 1 if $group->{ldap_dn};
+    }
+    return 0;
 }
 
 sub _user_in_group {
@@ -31,7 +41,9 @@ sub _user_in_group {
     # revoke access later in the check_can_admin_product.
 
     if ($group eq 'editcomponents') {
-        return 1 if scalar @{ $self->bless_groups };
+        if (@{ $self->bless_groups } or $self->in_ldap_group) {
+            return 1;
+        }
     }
     return $self->_orig_in_group($group, $product_id);
 }
@@ -64,7 +76,9 @@ sub _user_check_can_admin_product {
         }
     }
 
-    return $product if $can_bless;
+    if ($can_bless or $self->in_ldap_group) {
+        return $product;
+    }
 
     return 0 if $params->{skip_error} == 1;
     
@@ -97,6 +111,12 @@ sub template_before_process {
             }
             $vars->{products} = \@products;
         }
+    }
+    elsif ($file eq 'admin/products/list-classifications.html.tmpl') {
+        # The product/group admin shouldn't be able to add products.
+        # We turn back 'in_group' method to the original one for this
+        # particular template.
+        *Bugzilla::User::in_group = \&Bugzilla::User::_orig_in_group;
     }
 }
 
